@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Interactive Mind-Map Teacher</title>
+  <style>
+    :root { --bg:#0b0c10; --card:#11141a; --ink:#e7ecf2; --muted:#9fb0c3; --accent:#3b6aff; }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: var(--bg); color: var(--ink); display:flex; min-height:100vh;
+    }
+    .wrap { margin:auto; width:min(1100px, 96vw); padding: 24px; }
+    .card { background:var(--card); border-radius:18px; padding:20px; box-shadow: 0 10px 30px #0006; }
+    h1 { margin: 0 0 12px; font-size: 20px; font-weight: 600; letter-spacing:.2px; }
+    form { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+    input, button {
+      border-radius:14px; padding:12px 14px; border:1px solid #263041;
+      color:var(--ink); background:#141923;
+    }
+    input { flex: 1 1 230px; min-width: 200px; }
+    button { cursor:pointer; font-weight:600; flex: 0 0 auto; }
+    button[disabled]{ opacity:.6; cursor:not-allowed; }
+    .grid { display:grid; grid-template-columns: 2fr 1fr; gap:18px; }
+    .desc { font-size:15px; color:var(--muted); line-height:1.5 }
+    .stage { width:100%; height:560px; background:linear-gradient(180deg,#0f1320,#0b0c10); border-radius:16px; overflow:hidden; }
+    svg { width:100%; height:100%; display:block; }
+    .label { font-size:14px; fill:#e7ecf2; user-select:none; pointer-events:none; }
+    .node rect { transition: transform .12s ease; }
+    .node:hover rect { transform: scale(1.02); }
+    .badge { font-size:11px; fill:#b6c7dd; opacity:.9; pointer-events:none; }
+    .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Interactive Mind-Map Teacher</h1>
+      <form id="f">
+        <input id="subject" placeholder="Subject (e.g., Market Analytics)" value="Market Analytics" />
+        <input id="perspective" placeholder="Perspective (e.g., a high school student)" value="a high school student" />
+        <input id="purpose" placeholder="Purpose (e.g., out of curiosity)" value="out of curiosity" />
+        <button id="go">Generate</button>
+        <button type="button" id="demo">Demo</button>
+      </form>
+      <div class="hint">
+        Tip: <b>double-click</b> a node to expand or refresh it.
+        Hold <b>Alt/Option + double-click</b> to collapse. Drag empty space to <b>pan</b>.
+        <b>Wheel</b> to scroll/pan, <b>Ctrl/Cmd + wheel</b> to zoom. Arrow keys pan; +/-/0 zoom/reset.
+      </div>
+      <div class="grid">
+        <div class="stage">
+          <svg id="map" viewBox="0 0 1400 560" aria-label="mind map">
+            <g id="vp"></g>
+          </svg>
+        </div>
+        <div>
+          <h2 id="title" style="margin:0 0 6px;font-size:18px;"></h2>
+          <p id="description" class="desc"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ---------- DOM & SVG helpers ---------- */
+const $ = s => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const map = $("#map");
+const vp  = $("#vp");
+const title = $("#title");
+const desc = $("#description");
+const form = $("#f");
+const subj = $("#subject");
+const perspectiveInput = $("#perspective");
+const purposeInput = $("#purpose");
+const demoBtn = $("#demo");
+const svgEl = tag => document.createElementNS(NS, tag);
+
+/* ---------- Graph state ---------- */
+const state = { nodes: new Map(), edges: [], rootId: null };
+let idCounter = 0;
+
+/* ---------- Layout constants ---------- */
+const BASE_X = 140, X_STEP = 260, LEAF_GAP = 96, TOP_PAD = 60, BOTTOM_PAD = 60;
+const ROOT_H = 48, H = 42;
+
+/* ---------- View (pan/zoom + scroll) ---------- */
+const view = { x: 0, y: 0, scale: 1 };
+function applyTransform() { vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.scale})`); }
+
+/* drag to pan (empty space only) */
+let panning = false, startPt = {x:0,y:0}, startView={x:0,y:0};
+map.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".node")) return;
+  panning = true; map.setPointerCapture(e.pointerId);
+  startPt = { x: e.clientX, y: e.clientY }; startView = { ...view };
+});
+map.addEventListener("pointermove", (e) => {
+  if (!panning) return;
+  const dx = e.clientX - startPt.x, dy = e.clientY - startPt.y;
+  view.x = startView.x + dx; view.y = startView.y + dy;
+  applyTransform();
+});
+map.addEventListener("pointerup", () => { panning = false; });
+
+/* wheel: pan by default, zoom when Ctrl/Cmd */
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+map.addEventListener("wheel", (e) => {
+  const zooming = e.ctrlKey || e.metaKey;
+  if (zooming) {
+    e.preventDefault();
+    const rect = map.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const old = view.scale, factor = e.deltaY < 0 ? 1.1 : 0.9;
+    const next = clamp(old * factor, 0.5, 2.6);
+    view.x = mx - (mx - view.x) * (next / old);
+    view.y = my - (my - view.y) * (next / old);
+    view.scale = next;
+    applyTransform();
+  } else {
+    view.x -= e.deltaX;
+    view.y -= e.deltaY;
+    applyTransform();
+  }
+}, { passive:false });
+
+/* keyboard pan/zoom */
+window.addEventListener("keydown", (e) => {
+  const step = 40, zf = 1.12;
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","+","=","-","_","0"].includes(e.key)) e.preventDefault();
+  if (e.key === "ArrowLeft")  { view.x += step; applyTransform(); }
+  if (e.key === "ArrowRight") { view.x -= step; applyTransform(); }
+  if (e.key === "ArrowUp")    { view.y += step; applyTransform(); }
+  if (e.key === "ArrowDown")  { view.y -= step; applyTransform(); }
+  if (e.key === "+" || e.key === "=") { view.scale = clamp(view.scale * zf, 0.5, 2.6); applyTransform(); }
+  if (e.key === "-" || e.key === "_") { view.scale = clamp(view.scale / zf, 0.5, 2.6); applyTransform(); }
+  if (e.key === "0") { view.x = 0; view.y = 0; view.scale = 1; applyTransform(); }
+});
+
+/* ---------- utils ---------- */
+function nextId(label="n"){ return `${label}-${(++idCounter).toString(36)}`; }
+function measureWidth(text){ return Math.max(140, Math.min(280, 28 + Math.max(10, text.length) * 8)); }
+function canon(s){ return (s||"").toLowerCase().replace(/[\s\-_/]+/g,' ').replace(/[^\p{L}\p{N} ]/gu,'').trim(); }
+
+function ancestors(nodeId, includeSelf=false){
+  const arr = [];
+  let cur = state.nodes.get(nodeId);
+  if (includeSelf && cur) arr.unshift(cur);
+  while (cur && cur.parentId){
+    const p = state.nodes.get(cur.parentId);
+    if (!p) break;
+    arr.unshift(p);
+    cur = p;
+  }
+  return arr; // root..parent (plus self if requested)
+}
+function pathString(nodeId){
+  const names = [];
+  let cur = state.nodes.get(nodeId);
+  while (cur) { names.push(cur.label); cur = cur.parentId ? state.nodes.get(cur.parentId) : null; }
+  return names.reverse().join(" > ");
+}
+function pathWithDescriptions(nodeId){
+  const chain = ancestors(nodeId, true);
+  return chain.map(n => ({ name: n.label, description: n.description || "" }));
+}
+function rootLabel(){ return state.rootId ? state.nodes.get(state.rootId).label : ""; }
+
+/* ---------- API ---------- */
+async function fetchMindmap({subject, context="", exclude=[], path=[], perspective="", purpose=""}){
+  const r = await fetch("/api/mindmap", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ subject, context, exclude, path, perspective, purpose })
+  });
+  if(!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+
+/* ---------- State ops ---------- */
+function resetState(){
+  state.nodes.clear();
+  state.edges = [];
+  state.rootId = null;
+  title.textContent = ""; desc.textContent = "";
+  render();
+}
+function addNode({label, description, parentId=null}){
+  const id = nextId(label);
+  const node = {
+    id, label, description: description||"",
+    expanded:false, parentId, childIds:[],
+    level:0, x:BASE_X, y:0, w:measureWidth(label), h:H
+  };
+  if (parentId){
+    state.edges.push({ from: parentId, to: id });
+    state.nodes.get(parentId).childIds.push(id);
+  } else {
+    state.rootId = id;
+  }
+  state.nodes.set(id, node);
+  return node;
+}
+function removeSubtree(nodeId){
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  for (const cid of [...node.childIds]) removeSubtree(cid);
+  state.edges = state.edges.filter(e => e.from !== nodeId && e.to !== nodeId);
+  if (node.parentId){
+    const p = state.nodes.get(node.parentId);
+    if (p) p.childIds = p.childIds.filter(x => x !== nodeId);
+  }
+  state.nodes.delete(nodeId);
+}
+function collapseChildren(nodeId){
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  for (const cid of [...node.childIds]) removeSubtree(cid);
+  node.childIds = [];
+  node.expanded = false;
+}
+
+/* ---------- Layout (tidy tree) ---------- */
+function findRoot(){ return state.rootId ? state.nodes.get(state.rootId) : null; }
+function leafCount(node){
+  if (!node.childIds.length) return 1;
+  let s = 0; for (const cid of node.childIds){ s += leafCount(state.nodes.get(cid)); } return s;
+}
+function layout(node, level, topY){
+  const leaves = leafCount(node);
+  const subH = Math.max(1, leaves) * LEAF_GAP;
+
+  node.level = level;
+  node.w = measureWidth(node.label);
+  node.h = level === 0 ? ROOT_H : H;
+  node.x = BASE_X + level * X_STEP;
+  node.y = topY + subH / 2;
+
+  let cursor = topY;
+  for (const cid of node.childIds){
+    const child = state.nodes.get(cid);
+    const childLeaves = leafCount(child);
+    const bandH = Math.max(1, childLeaves) * LEAF_GAP;
+    layout(child, level + 1, cursor);
+    cursor += bandH;
+  }
+}
+function computeLayout(){
+  const root = findRoot(); if (!root) return;
+  layout(root, 0, TOP_PAD);
+  let maxLevel = 0; for (const n of state.nodes.values()) maxLevel = Math.max(maxLevel, n.level);
+  const totalW = BASE_X + maxLevel*X_STEP + 420;
+  const totalH = leafCount(root) * LEAF_GAP + TOP_PAD + BOTTOM_PAD;
+  map.setAttribute("viewBox", `0 0 ${Math.max(1400,totalW)} ${Math.max(560,totalH)}`);
+}
+
+/* ---------- Rendering ---------- */
+function clearG(g){ while (g.firstChild) g.removeChild(g.firstChild); }
+function curvePath(x1,y1, x2,y2){ const dx=(x2-x1)*0.55; return `M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`; }
+function drawEdge(a, b){
+  const path = svgEl("path");
+  path.setAttribute("d", curvePath(a.x + a.w/2, a.y, b.x - b.w/2, b.y));
+  path.setAttribute("stroke", getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || "#3b6aff");
+  path.setAttribute("stroke-width", "2.2");
+  path.setAttribute("fill", "none");
+  path.setAttribute("opacity", "0.95");
+  vp.appendChild(path);
+}
+function drawNode(node){
+  const g = svgEl("g");
+  g.classList.add("node");
+  g.dataset.id = node.id;
+
+  const rect = svgEl("rect");
+  rect.setAttribute("x", node.x - node.w/2);
+  rect.setAttribute("y", node.y - node.h/2);
+  rect.setAttribute("rx", Math.min(node.h/2, 26));
+  rect.setAttribute("ry", Math.min(node.h/2, 26));
+  rect.setAttribute("width", node.w);
+  rect.setAttribute("height", node.h);
+  rect.setAttribute("fill", "#1b2333");
+  rect.setAttribute("stroke", "#2f3b52");
+  rect.setAttribute("stroke-width", "1.5");
+
+  const t = svgEl("text");
+  t.setAttribute("x", node.x);
+  t.setAttribute("y", node.y + 5);
+  t.setAttribute("text-anchor","middle");
+  t.setAttribute("class","label");
+  t.textContent = node.label;
+
+  const badge = svgEl("text");
+  badge.setAttribute("x", node.x + node.w/2 - 10);
+  badge.setAttribute("y", node.y - node.h/2 + 14);
+  badge.setAttribute("text-anchor","end");
+  badge.setAttribute("class","badge");
+  badge.textContent = node.expanded ? "−" : "＋";
+
+  g.addEventListener("click", () => {
+    title.textContent = node.label;
+    desc.textContent = node.description || `Double-click to expand ${node.label} in the context of ${rootLabel()}.`;
+  });
+
+  g.addEventListener("dblclick", async (ev) => {
+    ev.preventDefault();
+    // Alt/Option + dblclick collapses
+    if (ev.altKey) {
+      collapseChildren(node.id);
+      node.expanded = false;
+      render();
+      return;
+    }
+
+    // (Re)expand/refresh: remove old kids if any, then fetch fresh
+    if (node.childIds.length) {
+      for (const cid of [...node.childIds]) removeSubtree(cid);
+      node.childIds = [];
+      node.expanded = false;
+    }
+
+    try {
+      badge.textContent = "…";
+
+      // Blocklist to avoid duplicates
+      const block = new Set();
+      block.add(canon(node.label));
+      for (const a of ancestors(node.id)) block.add(canon(a.label));
+
+      // rich ancestry memory: names + descriptions
+      const context = pathString(node.id);
+      const path = pathWithDescriptions(node.id);
+      const exclude = Array.from(block);
+
+      const perspective = perspectiveInput.value.trim();
+      const purpose = purposeInput.value.trim();
+
+      const data = await fetchMindmap({
+        subject: node.label,
+        context,
+        exclude,
+        path,
+        perspective,
+        purpose
+      });
+
+      node.description = data.description || node.description;
+
+      const seen = new Set();
+      for (const sc of data.subcategories) {
+        const c = canon(sc.name);
+        if (block.has(c) || seen.has(c)) continue;
+        seen.add(c);
+        addNode({ label: sc.name, description: sc.description, parentId: node.id });
+      }
+
+      node.expanded = true;
+      render();
+    } catch (e) {
+      badge.textContent = node.expanded ? "−" : "＋";
+      alert("Expand failed: " + (e?.message || e));
+    }
+  });
+
+  g.append(rect, t, badge);
+  vp.appendChild(g);
+}
+function render(){
+  clearG(vp);
+  computeLayout();
+  for (const e of state.edges){
+    const a = state.nodes.get(e.from), b = state.nodes.get(e.to);
+    if (a && b) drawEdge(a, b);
+  }
+  for (const n of state.nodes.values()) drawNode(n);
+  applyTransform();
+}
+
+/* ---------- App flow ---------- */
+async function initialize(subject){
+  resetState();
+  view.x = 0; view.y = 0; view.scale = 1; applyTransform();
+
+  const root = addNode({ label: subject, description: "" });
+  root.h = ROOT_H; title.textContent = root.label;
+
+  try {
+    const perspective = perspectiveInput.value.trim();
+    const purpose = purposeInput.value.trim();
+
+    const data = await fetchMindmap({
+      subject,
+      context: subject,
+      exclude: [canon(subject)],
+      path: [{name:subject, description:""}],
+      perspective,
+      purpose
+    });
+
+    root.description = data.description || root.description;
+    desc.textContent = root.description;
+  } catch {
+    desc.textContent = "Failed to load description. Double-click the node to retry.";
+  }
+  render();
+}
+
+form.addEventListener("submit", (e) => { e.preventDefault(); initialize(subj.value || "Finance"); });
+demoBtn.addEventListener("click", () => {
+  subj.value = "Finance";
+  perspectiveInput.value = "a high school student";
+  purposeInput.value = "out of curiosity";
+  initialize("Finance");
+});
+initialize(subj.value || "Finance");
+</script>
+</body>
+</html>
