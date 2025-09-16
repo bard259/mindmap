@@ -1,9 +1,54 @@
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
+// Demo responses for different subjects
+const demoResponses = {
+  finance: {
+    description: "How money flows and is managed: earning, saving, investing, borrowing, and risk.",
+    subcategories: [
+      {
+        name: "Personal Finance",
+        description: "Managing individual or family money, including budgeting, saving, and investing."
+      },
+      {
+        name: "Corporate Finance",
+        description: "How businesses manage funds, make investments, and maximize shareholder value."
+      },
+      {
+        name: "Investment",
+        description: "Growing wealth through stocks, bonds, real estate, and other financial instruments."
+      },
+      {
+        name: "Banking",
+        description: "Financial institutions that accept deposits and provide loans and other services."
+      }
+    ]
+  },
+  technology: {
+    description: "The application of scientific knowledge for practical purposes, especially in industry and daily life.",
+    subcategories: [
+      {
+        name: "Artificial Intelligence",
+        description: "Systems that can simulate human intelligence and perform tasks like learning and problem-solving."
+      },
+      {
+        name: "Cloud Computing",
+        description: "Delivery of computing services over the internet, including storage, processing, and software."
+      },
+      {
+        name: "Cybersecurity",
+        description: "Protection of computer systems and networks from information disclosure and theft."
+      }
+    ]
+  }
+};
+
+let isDemo = false;
+
+// Initialize OpenAI client only if API key is available
+const openai = process.env.EXPO_PUBLIC_OPENAI_API_KEY ? new OpenAI({
   apiKey: process.env.EXPO_PUBLIC_OPENAI_API_KEY,
   dangerouslyAllowBrowser: true
-});
+}) : null;
 
 const systemPrompt = `You are a knowledgeable teacher helping to create a mind map. For any given subject:
 1. Provide a clear, concise description (1-2 sentences)
@@ -21,7 +66,18 @@ Format your response as a JSON object with this structure:
   ]
 }`;
 
+export function setDemoMode(enabled) {
+  isDemo = enabled;
+}
+
 export async function generateMindMap(subject) {
+  // If in demo mode or no API key, return demo response
+  if (isDemo || !openai) {
+    const normalizedSubject = subject.toLowerCase();
+    // Return specific demo response if available, otherwise return finance demo
+    return demoResponses[normalizedSubject] || demoResponses.finance;
+  }
+
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
@@ -41,27 +97,10 @@ export async function generateMindMap(subject) {
     };
   } catch (error) {
     console.error('OpenAI API error:', error);
-    // Return a demo response for testing or when API fails
-    return {
-      description: "How money flows and is managed: earning, saving, investing, borrowing, and risk.",
-      subcategories: [
-        {
-          name: "Personal Finance",
-          description: "Managing individual or family money, including budgeting, saving, and investing."
-        },
-        {
-          name: "Corporate Finance",
-          description: "How businesses manage funds, make investments, and maximize shareholder value."
-        },
-        {
-          name: "Investment",
-          description: "Growing wealth through stocks, bonds, real estate, and other financial instruments."
-        },
-        {
-          name: "Banking",
-          description: "Financial institutions that accept deposits and provide loans and other services."
-        }
-      ]
-    };
+    // Switch to demo mode on error
+    isDemo = true;
+    // Return demo response based on subject
+    const normalizedSubject = subject.toLowerCase();
+    return demoResponses[normalizedSubject] || demoResponses.finance;
   }
 }

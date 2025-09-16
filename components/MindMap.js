@@ -1,7 +1,24 @@
 import React, { useState, useCallback } from 'react';
-import { View, StyleSheet, Text, TextInput, TouchableOpacity, Dimensions } from 'react-native';
+import { View, StyleSheet, Text, TextInput, TouchableOpacity, Dimensions, Platform } from 'react-native';
 import Svg, { Path, Rect, Text as SvgText, G } from 'react-native-svg';
-import { generateMindMap } from '../services/mindmap';
+
+// Helper for handling click/touch events across platforms
+const createPressHandler = (onClick, onLongPress) => {
+  if (Platform.OS === 'web') {
+    return {
+      onClick,
+      onMouseDown: () => {
+        const timer = setTimeout(onLongPress, 500);
+        window.addEventListener('mouseup', () => clearTimeout(timer), { once: true });
+      }
+    };
+  }
+  return {
+    onPress: onClick,
+    onLongPress
+  };
+};
+import { generateMindMap, setDemoMode } from '../services/mindmap';
 
 const BASE_X = 140;      // root x
 const X_STEP = 240;      // horizontal gap per level
@@ -103,29 +120,31 @@ export default function MindMap() {
       }, 0);
     };
 
-    const layoutNode = (node, level, topY) => {
+    const layoutNode = (nodeId, level, topY) => {
+      const node = nodes.get(nodeId);
+      if (!node) return 0;
+
       const leaves = leafCount(node);
       const subH = Math.max(1, leaves) * LEAF_GAP;
 
-      node.level = level;
-      node.w = measureWidth(node.label);
-      node.h = level === 0 ? ROOT_H : H;
-      node.x = BASE_X + level * X_STEP;
-      node.y = topY + subH / 2;
+      const updatedNode = {
+        ...node,
+        level,
+        w: measureWidth(node.label),
+        h: level === 0 ? ROOT_H : H,
+        x: BASE_X + level * X_STEP,
+        y: topY + subH / 2
+      };
+      nodes.set(nodeId, updatedNode);
 
       let cursor = topY;
       for (const childId of node.childIds) {
-        const child = nodes.get(childId);
-        if (child) {
-          const childLeaves = leafCount(child);
-          const bandH = Math.max(1, childLeaves) * LEAF_GAP;
-          cursor += layoutNode(child, level + 1, cursor);
-        }
+        cursor += layoutNode(childId, level + 1, cursor);
       }
       return subH;
     };
 
-    layoutNode(root, 0, TOP_PAD);
+    layoutNode(root.id, 0, TOP_PAD);
   }, [measureWidth]);
 
   const renderNode = useCallback((node) => {
@@ -186,13 +205,20 @@ export default function MindMap() {
   }, [nodes]);
 
   const initialize = useCallback(async (subject) => {
-    const root = addNode({ label: subject });
     try {
       const data = await generateMindMap(subject);
-      root.description = data.description || root.description;
-      setSelectedNode(root);
+      const rootNode = addNode({ 
+        label: subject,
+        description: data.description
+      });
+      setSelectedNode(rootNode);
     } catch (error) {
       console.error('Failed to load description:', error);
+      const rootNode = addNode({ 
+        label: subject,
+        description: "Loading description failed. Please try again."
+      });
+      setSelectedNode(rootNode);
     }
   }, [addNode]);
 
@@ -201,8 +227,14 @@ export default function MindMap() {
   }, [initialize]);
 
   React.useEffect(() => {
-    layout(nodes, edges);
-  }, [nodes, edges, layout]);
+    if (nodes.size > 0) {
+      const nodesClone = new Map(
+        Array.from(nodes.entries()).map(([id, node]) => [id, { ...node }])
+      );
+      layout(nodesClone, edges);
+      setNodes(nodesClone);
+    }
+  }, [edges, layout]);
 
   return (
     <View style={styles.container}>
@@ -218,19 +250,22 @@ export default function MindMap() {
           />
           <TouchableOpacity
             style={styles.button}
-            onPress={() => initialize(subject)}
+            {...createPressHandler(
+              () => initialize(subject),
+              null
+            )}
           >
             <Text style={styles.buttonText}>Generate</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.button}
-            onPress={() => {
-              const root = addNode({ 
-                label: "Finance", 
-                description: "How money flows and is managed: earning, saving, investing, borrowing, and risk." 
-              });
-              setSelectedNode(root);
-            }}
+            {...createPressHandler(
+              () => {
+                setDemoMode(true);
+                initialize('Finance');
+              },
+              null
+            )}
           >
             <Text style={styles.buttonText}>Demo</Text>
           </TouchableOpacity>
@@ -241,80 +276,87 @@ export default function MindMap() {
           <View style={styles.svgContainer}>
             <Svg width="100%" height={520} style={styles.svg}>
               {edges.map(renderEdge)}
-              {Array.from(nodes.values()).map((node) => (
-                <G 
-                  key={node.id}
-                  onPress={() => setSelectedNode(node)}
-                  onLongPress={async () => {
-                    if (node.expanded) {
-                      removeSubtree(node.id);
+              {Array.from(nodes.values()).map((node) => {
+                const handleLongPress = async () => {
+                  if (node.expanded) {
+                    removeSubtree(node.id);
+                    setNodes(prev => {
+                      const next = new Map(prev);
+                      const n = next.get(node.id);
+                      if (n) {
+                        next.set(node.id, { ...n, expanded: false });
+                      }
+                      return next;
+                    });
+                  } else {
+                    try {
+                      const data = await generateMindMap(node.label);
                       setNodes(prev => {
                         const next = new Map(prev);
                         const n = next.get(node.id);
                         if (n) {
-                          n.expanded = false;
-                          next.set(node.id, n);
+                          next.set(node.id, { 
+                            ...n, 
+                            description: data.description || n.description,
+                            expanded: true 
+                          });
                         }
                         return next;
                       });
-                    } else {
-                      try {
-                        const data = await generateMindMap(node.label);
-                        setNodes(prev => {
-                          const next = new Map(prev);
-                          const n = next.get(node.id);
-                          if (n) {
-                            n.description = data.description || n.description;
-                            n.expanded = true;
-                            next.set(node.id, n);
-                          }
-                          return next;
-                        });
-                        data.subcategories.forEach((sc) => {
-                          addNode({ 
-                            label: sc.name, 
-                            description: sc.description, 
-                            parentId: node.id 
-                          });
-                        });
-                      } catch (error) {
-                        console.error('Failed to expand node:', error);
-                      }
+                      // Add all subcategories in a single batch
+                      const newNodes = data.subcategories.map(sc => ({
+                        label: sc.name,
+                        description: sc.description,
+                        parentId: node.id
+                      }));
+                      newNodes.forEach(addNode);
+                    } catch (error) {
+                      console.error('Failed to expand node:', error);
                     }
-                  }}
-                >
-                  <Rect
-                    x={node.x - node.w/2}
-                    y={node.y - node.h/2}
-                    rx={Math.min(node.h/2, 26)}
-                    ry={Math.min(node.h/2, 26)}
-                    width={node.w}
-                    height={node.h}
-                    fill="#1b2333"
-                    stroke="#2f3b52"
-                    strokeWidth={1.5}
-                  />
-                  <SvgText
-                    x={node.x}
-                    y={node.y + 5}
-                    textAnchor="middle"
-                    fill="#e7ecf2"
-                    fontSize={14}
+                  }
+                };
+
+                return (
+                  <G 
+                    key={node.id}
+                    {...createPressHandler(
+                      () => setSelectedNode(node),
+                      handleLongPress
+                    )}
                   >
-                    {node.label}
-                  </SvgText>
-                  <SvgText
-                    x={node.x + node.w/2 - 10}
-                    y={node.y - node.h/2 + 14}
-                    textAnchor="end"
-                    fill="#b6c7dd"
-                    fontSize={11}
-                    opacity={0.9}
-                  >
-                    {node.expanded ? "−" : "＋"}
-                  </SvgText>
-                </G>
-              ))}
+                    <Rect
+                      x={node.x - node.w/2}
+                      y={node.y - node.h/2}
+                      rx={Math.min(node.h/2, 26)}
+                      ry={Math.min(node.h/2, 26)}
+                      width={node.w}
+                      height={node.h}
+                      fill="#1b2333"
+                      stroke="#2f3b52"
+                      strokeWidth={1.5}
+                    />
+                    <SvgText
+                      x={node.x}
+                      y={node.y + 5}
+                      textAnchor="middle"
+                      fill="#e7ecf2"
+                      fontSize={14}
+                    >
+                      {node.label}
+                    </SvgText>
+                    <SvgText
+                      x={node.x + node.w/2 - 10}
+                      y={node.y - node.h/2 + 14}
+                      textAnchor="end"
+                      fill="#b6c7dd"
+                      fontSize={11}
+                      opacity={0.9}
+                    >
+                      {node.expanded ? "−" : "＋"}
+                    </SvgText>
+                  </G>
+                );
+              })}
             </Svg>
           </View>
           <View style={styles.description}>
