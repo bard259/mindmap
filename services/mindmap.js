@@ -43,6 +43,10 @@ const demoResponses = {
 };
 
 let isDemo = false;
+let apiCallCount = 0;
+const API_LIMIT = 10; // 每个会话最多允许10次API调用
+const API_COOLDOWN = 100; // 两次API调用之间至少间隔100毫秒
+let lastApiCall = 0;
 
 // Initialize OpenAI client only if API key is available
 const openai = process.env.EXPO_PUBLIC_OPENAI_API_KEY ? new OpenAI({
@@ -50,40 +54,86 @@ const openai = process.env.EXPO_PUBLIC_OPENAI_API_KEY ? new OpenAI({
   dangerouslyAllowBrowser: true
 }) : null;
 
-const systemPrompt = `You are a knowledgeable teacher helping to create a mind map. For any given subject:
-1. Provide a clear, concise description (1-2 sentences)
-2. List 3-5 key subcategories that are most important to understand this subject
-3. For each subcategory, provide a brief description (1 sentence)
+// 重置API调用计数
+export function resetApiCount() {
+  apiCallCount = 0;
+  lastApiCall = 0;
+}
 
-Format your response as a JSON object with this structure:
-{
-  "description": "Main subject description",
-  "subcategories": [
-    {
-      "name": "Subcategory name",
-      "description": "Subcategory description"
-    }
-  ]
-}`;
+function buildPrompt({ subject, context = '', exclude = [], path = [], perspective = '', purpose = '' }) {
+  return `
+You are a teacher tailoring explanations to the reader.
+
+Reader perspective/audience: "${perspective || 'an interested learner'}".
+Purpose/intent: "${purpose || 'learning and understanding'}".
+
+Return ONLY JSON that matches the schema (no prose, no code fences).
+
+Topic to expand: "${subject}".
+${context ? `Context breadcrumb: "${context}".` : ''}
+
+Ancestry memory (oldest → newest):
+${path.map(p => `- ${p.name}: ${p.description || ''}`).join('\n') || '- (none)'}
+
+Forbidden names (avoid exact/near duplicates; pick different on-topic items): ${exclude.join(', ') || '(none)'}.
+
+Rules:
+- Keep everything specific to the provided context/memory AND aligned to the reader perspective and purpose.
+- Provide exactly 3 unique, concrete, immediate subcategories.
+- One concise sentence for each "description". Use approachable wording for the audience.
+`.trim();
+};
 
 export function setDemoMode(enabled) {
   isDemo = enabled;
 }
 
-export async function generateMindMap(subject) {
-  // If in demo mode or no API key, return demo response
+export function canon(s) {
+  return (s || "").toLowerCase().replace(/[\s\-_/]+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim();
+}
+
+export async function generateMindMap({ 
+  subject, 
+  context = '', 
+  exclude = [], 
+  path = [], 
+  perspective = '', 
+  purpose = '' 
+}) {
+  // 如果在演示模式或没有API密钥，返回演示响应
   if (isDemo || !openai) {
-    const normalizedSubject = subject.toLowerCase();
-    // Return specific demo response if available, otherwise return finance demo
+    const normalizedSubject = canon(subject);
+    return demoResponses[normalizedSubject] || demoResponses.finance;
+  }
+
+  // 检查API调用限制
+  if (apiCallCount >= API_LIMIT) {
+    console.warn('API call limit reached, switching to demo mode');
+    isDemo = true;
+    const normalizedSubject = canon(subject);
+    return demoResponses[normalizedSubject] || demoResponses.finance;
+  }
+
+  // 检查API调用冷却时间
+  const now = Date.now();
+  if (now - lastApiCall < API_COOLDOWN) {
+    console.warn('API call too frequent, using demo response');
+    const normalizedSubject = canon(subject);
     return demoResponses[normalizedSubject] || demoResponses.finance;
   }
 
   try {
+    apiCallCount++;
+    lastApiCall = now;
+    console.log(`API call ${apiCallCount}/${API_LIMIT} for subject: ${subject}`);
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Create a mind map for: ${subject}` }
+        { 
+          role: "user", 
+          content: buildPrompt({ subject, context, exclude, path, perspective, purpose })
+        }
       ],
       temperature: 0.7,
       max_tokens: 1000,
@@ -97,10 +147,9 @@ export async function generateMindMap(subject) {
     };
   } catch (error) {
     console.error('OpenAI API error:', error);
-    // Switch to demo mode on error
+    // 发生错误时切换到演示模式
     isDemo = true;
-    // Return demo response based on subject
-    const normalizedSubject = subject.toLowerCase();
+    const normalizedSubject = canon(subject);
     return demoResponses[normalizedSubject] || demoResponses.finance;
   }
 }
