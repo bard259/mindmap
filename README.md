@@ -17,17 +17,19 @@ echo "EXPO_PUBLIC_OPENAI_API_KEY=your_openai_api_key_here" > .env
 # Install dependencies
 npm install
 
-# Start web version
-npm run web
+# Start the development server
+npx expo start
 
-# Start for iOS (requires macOS and Xcode)
-npm run ios
+# This will show a QR code and options to:
+# - Press w to open web
+# - Press i to open iOS simulator
+# - Press a to open Android emulator
+# - Scan QR code with Expo Go (iOS) or Camera app (Android)
 
-# Start for Android (requires Android Studio)
-npm run android
-
-# Start Expo server (for Expo Go app)
-npm start
+# You can also use these direct commands:
+npx expo start --web     # Start web version
+npx expo start --ios     # Start iOS version
+npx expo start --android # Start Android version
 ```
 
 ## Project Structure
@@ -57,8 +59,8 @@ mindmap/
 - Interactive mind map creation
 - Cross-platform support (Web/iOS/Android)
 - SVG-based rendering
-- Modern React Native architecture
-- Expo Router navigation
+- Modern React Native architecture with Expo SDK 54
+- OpenAI API integration with fallback demo mode
 
 ## Troubleshooting
 
@@ -70,13 +72,19 @@ rm -rf node_modules
 npm install
 ```
 
-2. Clear Expo cache:
+2. Clear Expo cache and node_modules:
 ```bash
+rm -rf node_modules .expo web-build
+npm install
 npx expo start -c
 ```
 
 3. For web-specific issues:
 ```bash
 # Start with clear cache
-npm run web -- -c
+npx expo start --web -c
 ```
+
+4. If you don't have an OpenAI API key:
+   - Click the "Demo" button in the app to use demo mode
+   - This will show sample mind maps without requiring an API key

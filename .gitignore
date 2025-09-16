@@ -1,3 +1,35 @@
 
+# Environment variables
 .env
-node_modules
+.env.*
+
+# Dependencies
+node_modules/
+npm-debug.*
+
+# Expo
+.expo/
+dist/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# Logs
+*.log
