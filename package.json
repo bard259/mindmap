@@ -2,19 +2,31 @@
   "name": "mindmap-teacher",
   "version": "1.0.0",
   "private": true,
-  "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "expo start",
+    "web": "expo start --web",
+    "ios": "expo start --ios",
+    "android": "expo start --android"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.2",
-    "express": "^5.1.0",
-    "openai": "^5.20.3"
+    "@expo/metro-runtime": "~6.1.2",
+    "expo": "54.0.7",
+    "expo-constants": "~18.0.8",
+    "expo-linking": "~8.0.8",
+    "expo-splash-screen": "~31.0.10",
+    "expo-status-bar": "~3.0.8",
+    "openai": "^5.20.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.4",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
+    "react-native-web": "^0.21.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@types/react": "~19.1.10"
   }
 }
